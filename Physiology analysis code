@@ -1,0 +1,701 @@
+library(car)
+library(MASS)
+library(multcomp)
+library(readxl)#used to read excel files
+library(plyr)#used to find mean, sd etc. (I used it to make bar graphs with error bars)
+#library(igraph)#used to make social networks. I do not think you need it for this script, but it was in an earlier version so better safe than sorry
+library(ggplot2)#used to make graphs
+library(lme4)#used to run a mixed linear model
+#library(plotrix)#this tests for normal distribution
+library(lmerTest)#gives p values and significance stars to the read out from the mixed linear model
+library(gridExtra)#used to put several graphs into one image 
+library(grid)#used to put several graphs into one image 
+library(reshape2)
+#library(igraph) 
+#install.packages("ggpubr")
+#install.packages("Rcpp")
+library(ggpubr)
+#install.packages("jtools")
+library(jtools)
+#install.packages("interactions")
+library(interactions)
+
+setwd("K:/Research/dijks1pLab/All Projects/A. burtoni - Ascending Male Oxidative Damage/datasheets")
+###Reading in data sheet - 86 removed as was a dom (not ascending male)
+Ascent <- read_excel("Ultimate Data Sheet Ascent with plate readings no 86.xlsx", col_names = TRUE)
+###Altering dataframe to be more user-friendly with R
+Ascent <- Ascent[grepl("", Ascent$Status),]
+Ascent <- Ascent[grepl("", Ascent$Group),]
+Ascent$Group <- paste(Ascent$Status, Ascent$Group, sep=".")
+Ascent$Group <- factor(Ascent$Group,levels = c("s.C", "a.1", "a.2", "a.6", "a.14", "d.C"))
+levels(Ascent$Group)<-c("Sub", "1","2","6","14","Dom")
+
+#################Creating a column for comparitive value of ROMs to TAC
+##From oxidative stress review paper (Katerji 2019), Oxidative Stress Index
+##is the ratio of total oxidant status to total antioxidant status
+Ascent$OSI <- Ascent$TAC/Ascent$ROM
+
+################Subsetting dataset to different iterations by test required
+###Making dataframe containing only subs and day1 males
+Day14<-subset(Ascent, Ascent$Group=="14"|Ascent$Group=="Dom")
+###Making dataframe containing only subs and day1 males
+Day1<-subset(Ascent, Ascent$Group=="Sub"|Ascent$Group=="1")
+###Creating a separate dataframe for Control males (due to pair-wise sampling, must be analyzed separately)
+Control<-subset(Ascent, Ascent$Group=="Sub"|Ascent$Group=="Dom")
+###subsetting out control males to analyze solely ascent males (non pair-wise sampling)
+Focal<-subset(Ascent, Ascent$Group==1|Ascent$Group==2|Ascent$Group==6|Ascent$Group==14)
+###Subset for subs vs day-14 - Dijkstra wanted to see GSI different
+GSIsubs<-subset(Ascent, Ascent$Group=="Sub"|Ascent$Group=="14")
+###Subset for doms vs day-1 - was curious
+GSIdom.1<-subset(Ascent, Ascent$Group=="Dom"|Ascent$Group=="1")
+
+
+# Statistical analysis of ascending males by day
+
+Focaltest<-subset(Focal, Focal$NOX!="NA")
+############################NOX Ascent
+#####Start by making LM and seeing if this is a normal distribution
+m1 <- lm(NOX ~ Group, data = Focaltest)
+summary(m1)
+###Testing for normality
+r <- resid(m1)
+#p-value < .05 indicates deviation from normality - Need to use GLM
+shapiro.test(r)
+
+###As the residuals of the LM was not normally distributed, need to use GLM
+m1 <- glm(NOX ~ Group, family = gaussian(link = "log"), data = Focaltest)
+summary(m1)
+
+#model diagnostics - testing how well fit the model is
+op <- par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m1)
+#qqplot not good but it's the best we can do
+
+#to look at the main effect of Group, using Anova table from car package:
+# see: https://rcompanion.org/handbook/G_09.html
+Anova(m1, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is no significant difference across groups: p=.1888
+plot(m1)
+
+plot(fitted(m1), residuals(m1), xlab = "Fitted Values", ylab = "Residuals")
+abline(h = 0, lty = 2)
+lines(smooth.spline(fitted(m1), residuals(m1)))
+# want to see that solid line falls on the dashed line. 
+
+#################ROMs by Ascent group
+#make histo plot by Group
+###Looking at histogram of sample distribution before making model
+df <- Ascent
+ggplot(df, aes(x=ROM)) +
+  geom_histogram(fill="black", position="dodge")+
+  facet_wrap(~Group) # frame definition
+#As distribution seems fine, testing using LM
+m2 <- lm(ROM ~ Group, data = Focaltest)
+summary(m2)
+###Testing residuals for normality
+r <- resid(m2)
+#p-value > .05 indicates normality - lm is fine
+shapiro.test(r)
+
+#model diagnostics
+op <- par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m2)
+# it looks great (qq plot looks good, dots on line); residuals normally distributed
+Anova(m2, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is a significant difference across groups: p<.00005
+
+# posthoc test (ROM) - as there was a significant difference across groups
+# need to run a post-hoc test to determine where differences are
+summary(glht(m2, linfct = mcp(Group = "Tukey")), test = adjusted("bonferroni"))
+###Significant difference at 1-14 (between group 1 and 14) and 2-14
+
+#with the following code, I get slightly different but similar results:
+#dat <- aov(ROM ~ Group, data = Ascent)
+#summary(dat)
+#TukeyHSD(dat)
+
+
+########### Plasma TAC by Ascent group
+m3 <- lm(TAC ~ Group, data = Focal) #I tested weight, but no effect (because weight was important in previous studies)
+summary(m3)
+
+r <- resid(m3)
+#p-value > .05 indicates normality - ANOVA is fine
+shapiro.test(r)
+
+op <- par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m3)
+hist(m3$resid, main="Histogram of Residuals",
+     ylab="Residuals")
+hist(Focal$TAC)
+# it looks allright
+
+Anova(m3, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is a significant difference across groups: p = .00065
+
+###Post-Hoc test
+summary(glht(m3, linfct = mcp(Group = "Tukey")), test = adjusted("bonferroni"))
+#significant reduction in TAC on day 1!; Day 1 different from Day 14 and Dom as well
+
+#### Liver TAC(Liver.TAC) by Ascent group
+m3.5 <- lm(Liver.TAC ~ Group, data = Focal) 
+summary(m3.5)
+
+r <- resid(m3.5)
+#p-value < .05 indicates deviates from normality - generalized model required
+shapiro.test(r)
+
+op <- par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m3.5)
+hist(m3.5$resid, main="Histogram of Residuals",
+     ylab="Residuals")
+hist(Focal$Liver.TAC)
+# heavily left-skewed
+
+########Liver.TAC with GLM - LM residuals not normally distributed
+m3.5 <- glm(Liver.TAC ~ Group, family = gaussian(link = "log"), data = Focal)
+summary(m3.5)
+
+#model diagnostics
+op <- par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m3.5)
+###Not great, but looks pretty good
+
+Anova(m3.5, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is a significant difference across groups: p = .0347
+
+###Post-Hoc testing
+summary(glht(m3.5, linfct = mcp(Group = "Tukey")), test = adjusted("bonferroni"))
+###Significant difference between Day 1 and Day 14 males (increasing))
+### day 1-14, z = -2.788, p = 0.0318
+
+########## Liver.SOD by Ascent group
+m4 <- lm(Liver.SOD ~ Group, data = Focal) 
+summary(m4)
+
+r <- resid(m4)
+#p-value > .05 indicates normality - ANOVA is fine
+shapiro.test(r)
+
+op <- par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m4)
+hist(m4$resid, main="Histogram of Residuals",
+     ylab="Residuals")
+hist(Ascent$Liver.SOD)
+# it looks allright
+
+#to look at the main effect of Group, using Anova table from car package:
+# see: https://rcompanion.org/handbook/G_09.html
+Anova(m4, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is a significant difference across groups: p=.01042
+
+###Post-hoc testing
+summary(glht(m4, linfct = mcp(Group = "Tukey")), test = adjusted("bonferroni"))
+# significantly higher SOD day 2 compared to day 14 (day 2-14, z = -3.266p=.0127)
+
+
+#### Blood DNA Damage by Ascent group
+m5 <- lm(Damage ~ Group, data = Focal) #I tested weight, but no effect (because weight was important in previous studies)
+summary(m5)
+
+r <- resid(m5)
+#p-value > .05 indicates normality - ANOVA is fine
+shapiro.test(r)
+
+Anova(m5, type = "II") #if there is no interaction effect, Type II is more powerful
+# No significant difference across groups: p=.7165
+
+
+#### Liver DNA Damage by Ascent group
+m6 <- lm(Liver.damage ~ Group, data = Focal) 
+summary(m6)
+
+r <- resid(m6)
+#p-value > .05 indicates normality - ANOVA is fine
+shapiro.test(r)
+
+Anova(m6, type = "II") #if there is no interaction effect, Type II is more powerful
+# No significant difference across groups: p=.7513
+
+
+#### GSI by Ascent group
+m7 <- lm(GSI ~ Group, data = Focal) 
+summary(m7)
+
+r <- resid(m7)
+#p-value > .05 indicates normality - ANOVA is fine
+shapiro.test(r)
+
+Anova(m7, type = "II") #if there is no interaction effect, Type II is more powerful
+# No significant difference across groups: p=.1141
+
+
+# Statistical analysis for control males (sub-dom comparison)
+
+##########Due to paired sampling, for all males removed from the dataset, their respective counterpart must be omitted
+###If a sub in a condo was removed, the dom in the same condo must be removed
+#Creating unique ID for each pair-wise sampling, which will read Tank.Condo.Batch
+Control$Tank.condo<-paste(Control$Tank, Control$Condo, sep=".")
+Control$id<-paste(Control$Tank.condo,Control$Batch, sep=".")
+
+#Not allowing to open if saved directly as a xlsx file - having to save as csv then save as xlsx file
+write.csv(Control,file="Control tanks ultimate data sheet.csv")
+
+Subs<-subset(Control, Control$Group=="Sub")
+Doms<-subset(Control, Control$Group=="Dom")
+
+test<-merge(Doms,Subs,by='id',all.x=T)
+
+########NOX sub-dom comparison
+###No longer using generalized mixed models - too large spread of data = no good fit
+  ###Using non-parametric test instead
+#Subsetting out datum with no pair
+NOX<-subset(test, test$id!="B1.L.4")
+NOX.c<-subset(Control, Control$id!="B1.L.4")
+
+###Testing for normality in t-test
+with(NOX.c, shapiro.test(NOX[Group == "Sub"]))# p = 8.294e-05 - not normally distributed
+with(NOX.c, shapiro.test(NOX[Group == "Dom"]))# p = 4.328e-06 - not normally distributed
+
+###Not certain where I obtained this information: For t-test, substracting one group from the other is used to determine normality
+m1 <- with(NOX, NOX.x - NOX.y)
+shapiro.test(m1)
+###p<.05 - not normally distributed
+  ###Dijkstra said to use generalized linear model (instead of non-parametric t-test) - possible for paired sampling?
+###non-parametric paired t-test
+m1 <- wilcox.test(NOX$NOX.x, NOX$NOX.y, paired = TRUE)
+m1
+###There is no significant difference in NOX between doms and subs - p=.8999
+
+#################Trying generalized linear models - still uncertain if correct
+nonpar.NOX<-subset(Control, Control$id!="B1.L.4")
+
+m1.5 <- glm(NOX ~ Group, family = gaussian(link = "log"), data = nonpar.NOX)
+summary(m1.5)
+
+#model diagnostics
+op <- par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m1.5)
+###Not great, but looks pretty good
+
+Anova(m1.5, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is no significant difference across groups: p = 0.405
+
+###This is doing paired test
+m1.5 <- glmer(NOX ~ Group +(1|id), family = gaussian(link = "log"), data = nonpar.NOX)
+summary(m1.5)
+#There is no significant difference between doms and subs: p=0.135
+
+nonpar.NOX$id
+
+#################ROM of control tanks
+m2 <- with(test, ROM.x - ROM.y)
+shapiro.test(m2)
+###p>.05 - data is normally distributed
+
+#Parametric t-test
+m2 <- t.test(test$ROM.x, test$ROM.y, paired = TRUE)
+m2
+#There is a significant difference between doms and subs: p=0.02979
+
+
+################TAC of control tanks
+m3 <- with(test, TAC.x - TAC.y)
+shapiro.test(m3)
+###p>.05 - data is normally distributed
+
+#Parametric t-test
+m3 <- t.test(test$TAC.x, test$TAC.y, paired = TRUE)
+m3
+#There is no significant difference between doms and subs: p=.09233
+
+################Liver.TAC of control tanks
+m3.5 <- with(test, Liver.TAC.x - Liver.TAC.y)
+shapiro.test(m3.5)
+###p>.05 - data is normally distributed
+
+#Parametric t-test
+m3.5 <- t.test(test$Liver.TAC.x, test$Liver.TAC.y, paired = TRUE)
+m3.5
+#There is no significant difference between doms and subs: p=0.5812
+
+###############Liver.SOD of control tanks
+SOD<-subset(test, test$id!="E1.L.4")
+m4 <- with(SOD, Liver.SOD.x - Liver.SOD.y)
+shapiro.test(m4)
+###p<.05 - data is not normally distributed
+
+#################Trying generalized linear models - this should be correct
+nonpar.SOD<-subset(Control, Control$id!="E1.L.4")
+m4.5 <- glmer(Liver.SOD ~ Group +(1|id), family = Gamma(link = "inverse"), data = nonpar.SOD)
+summary(m4.5)
+#There is no significant difference between doms and subs: p=0.753
+
+
+##############BLOOD DNA damage of control tanks
+m5 <- with(test, Damage.x - Damage.y)
+shapiro.test(m5)
+###p>.05 - data is normally distributed
+
+#Parametric t-test
+m5 <- t.test(test$Damage.x, test$Damage.y, paired = TRUE)
+m5
+#There is no significant difference between doms and subs: p=.2325
+
+#############Liver DNA damage of control tanks
+Liver.DNA<-subset(test, test$Liver.damage.x!="NA")
+Liver.DNA<-subset(Liver.DNA, test$Liver.damage.y!="NA")
+Liver.DNA<-subset(Liver.DNA, id!="T1.R.2")
+m6 <- with(Liver.DNA, Liver.damage.x - Liver.damage.y)
+shapiro.test(m6)
+###p>.05 - data is normally distributed
+
+#Parametric t-test
+m6 <- t.test(Liver.DNA$Liver.damage.x, Liver.DNA$Liver.damage.y, paired = TRUE)
+m6
+#There is no significant difference between doms and subs: p=.9457
+
+
+############GSI of control tanks
+###Removing Q1 controls as no GSI data exists for right control sub
+GSI<-subset(test, test$id!="Q1.R.4")
+m7 <- with(GSI, GSI.x - GSI.y)
+shapiro.test(m7)
+###p>.05 - data is normally distributed
+
+#Parametric t-test
+m7 <- t.test(GSI$GSI.x, GSI$GSI.y, paired = TRUE)
+m7
+#There is a significant difference between doms and subs: p=.01742
+
+
+# Statistical analyses comparing control subs to day 1 males
+
+#####NOX
+# Shapiro-Wilk normality test for sub
+with(Day1, shapiro.test(NOX[Group == "Sub"]))# p < .05
+# Shapiro-Wilk normality test for day 1
+with(Day1, shapiro.test(NOX[Group == "1"])) # p = .000245
+###Both subs and day 1 fail to meet normality - need to use non-parametric test
+
+###Generalized linear model
+qqp(Day1$NOX, "lnorm") 
+#Good fit - only 1 point outside dashed line - let's use lnorm
+m1 <- glm(NOX ~ Group, family = gaussian(link = "log"), data = Day1)
+summary(m1)
+###There is no significant difference between subs and day 1 - p=.4329
+      ##########VERY DIFFERENT THAN NON-PARAMETRIC T-TEST - DONE PROPERLY???###############
+
+#model diagnostics
+par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m1)
+###Doesn't look terrible but not great - seems like possibly outliers on right end
+  #"4" and "21" (fish codes 62 and 285) possible outliers 
+###Removed outliers from dataset
+NOXo<-subset(Day1, `Fish Code`!=62)
+NOXo<-subset(NOXo, `Fish Code`!=285)
+
+#Rerunning model with removed outliers
+qqp(NOXo$NOX, "lnorm") 
+#Good fit - only 1 point outside dashed line - let's use lnorm
+m1 <- glm(NOX ~ Group, family = gaussian(link = "log"), data = NOXo)
+summary(m1)
+###There is no significant difference - p=.287
+
+#model diagnostics
+par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m1)
+###Still looks like some outliers - would need to remove ~4 more points before anything substantial.  Likely leave as is
+
+#NOX sub-day1 
+Day1$resp<-Day1$NOX
+#NOX<-play(Day1)
+#NOX<-NOX+coord_cartesian(ylim=c(0,4)) + ylab(("NOX"))
+#NOX
+
+
+###non-parametric unpaired t-test
+m1 <- wilcox.test(NOX ~ Group, data = Day1,
+                   exact = FALSE)
+m1
+###No difference between subs and day 1 (BARELY!!!) - p=.06174
+###Very different from glm p-value - need to look into a bit
+
+#####ROM
+# Shapiro-Wilk normality test for sub
+with(Day1, shapiro.test(ROM[Group == "Sub"]))# p > .05
+# Shapiro-Wilk normality test for day 1
+with(Day1, shapiro.test(ROM[Group == "1"])) # p > .05
+
+###Testing for homogeneity of variances (seeing if variance amongst groups is roughly equivalent)
+res.ftest <- var.test(ROM ~ Group, data = Day1)
+res.ftest
+##p>.05 - no difference between the variances of the two group - can use parametric unpaired t-test
+
+#Parametric t-test
+m2 <- t.test(ROM ~ Group, data = Day1, var.equal = TRUE)
+m2
+#There is no significant difference between subs and day 1 for ROMs: p=.2231
+
+#####TAC
+# Shapiro-Wilk normality test for sub
+with(Day1, shapiro.test(TAC[Group == "Sub"]))# p > .05
+# Shapiro-Wilk normality test for day 1
+with(Day1, shapiro.test(TAC[Group == "1"])) # p > .05
+
+###Testing for homogeneity of variances (seeing if variance amongst groups is roughly equivalent)
+res.ftest <- var.test(TAC ~ Group, data = Day1)
+res.ftest
+##p>.05 - no difference between the variances of the two group - can use parametric unpaired t-test
+
+#Parametric t-test
+m3 <- t.test(TAC ~ Group, data = Day1, var.equal = TRUE)
+m3
+##There is a significant difference between subs and day 1 for TAC - p=.00443
+
+#####Liver.TAC
+# Shapiro-Wilk normality test for sub
+with(Day1, shapiro.test(Liver.TAC[Group == "Sub"]))# p > .05
+# Shapiro-Wilk normality test for day 1
+with(Day1, shapiro.test(Liver.TAC[Group == "1"])) # p < .05
+###Both subs and day 1 fail to meet normality - need to use non-parametric test
+
+###Generalized linear model
+qqp(Day1$Liver.TAC, "lnorm") 
+#Good fit - only 1 point outside dashed line - let's use lnorm
+
+m3.5 <- glm(Liver.TAC ~ Group, family = gaussian(link = "log"), data = Day1)
+summary(m3.5)
+##There is a significant difference between subs and day 1 for Liver TAC - p=0.0135
+
+#####Liver.SOD
+# Shapiro-Wilk normality test for sub
+with(Day1, shapiro.test(Liver.SOD[Group == "Sub"]))# p > .05
+# Shapiro-Wilk normality test for day 1
+with(Day1, shapiro.test(Liver.SOD[Group == "1"])) # p > .05
+
+###Testing for homogeneity of variances (seeing if variance amongst groups is roughly equivalent)
+res.ftest <- var.test(Liver.SOD ~ Group, data = Day1)
+res.ftest
+##p<.05 - there is a significant difference between the variances of the two group - must use non-parametric unpaired t-test
+
+###Generalized linear model
+qqp(Day1$Liver.SOD, "lnorm") 
+#Not great - try gamma
+gamma <- fitdistr(Day1$Liver.SOD, "gamma", lower = c(0,0))
+qqp(Day1$Liver.SOD, "gamma", shape = gamma$estimate[[1]], rate = gamma$estimate[[2]])
+#gamma looks great - let's use gamma
+m4 <- glm(Liver.SOD ~ Group, family = Gamma(link = "log"), data = Day1)
+summary(m4)
+###There is no significant difference between subs and Day 1 for SOD - p=.539
+
+#model diagnostics
+par(mfrow=c(2,2))  ## 2x2 subplot grid
+plot(m4)
+###Looks good
+
+###non-parametric unpaired t-test
+#m4 <- wilcox.test(Liver.SOD ~ Group, data = Day1,
+#                  exact = FALSE)
+#m4
+##There is no significant difference between subs and day 1 for SOD - p=.308
+
+
+#####BLOOD DNA damage (Damage)
+# Shapiro-Wilk normality test for sub
+with(Day1, shapiro.test(Damage[Group == "Sub"]))# p > .05
+# Shapiro-Wilk normality test for day 1
+with(Day1, shapiro.test(Damage[Group == "1"])) # p > .05
+
+###Testing for homogeneity of variances (seeing if variance amongst groups is roughly equivalent)
+res.ftest <- var.test(Damage ~ Group, data = Day1)
+res.ftest
+##p>.05 - no difference between the variances of the two group - can use parametric unpaired t-test
+
+#Parametric t-test
+m5 <- t.test(Damage ~ Group, data = Day1, var.equal = TRUE)
+m5
+##There is no significant difference between subs and day 1 for blood DNA damage - p=.2091
+
+
+#####Liver DNA damage
+# Shapiro-Wilk normality test for sub
+with(Day1, shapiro.test(Liver.damage[Group == "Sub"]))# p > .05
+# Shapiro-Wilk normality test for day 1
+with(Day1, shapiro.test(Liver.damage[Group == "1"])) # p > .05
+
+###Testing for homogeneity of variances (seeing if variance amongst groups is roughly equivalent)
+res.ftest <- var.test(Liver.damage ~ Group, data = Day1)
+res.ftest
+##p>.05 - no difference between the variances of the two group - can use parametric unpaired t-test
+
+#Parametric t-test
+m6 <- t.test(Liver.damage ~ Group, data = Day1, var.equal = TRUE)
+m6
+##There is no significant difference between subs and day 1 for Liver DNA damage - p=.831
+
+#####GSI
+# Shapiro-Wilk normality test for sub
+with(Day1, shapiro.test(GSI[Group == "Sub"]))# p > .05
+# Shapiro-Wilk normality test for day 1
+with(Day1, shapiro.test(GSI[Group == "1"])) # p > .05
+
+###Testing for homogeneity of variances (seeing if variance amongst groups is roughly equivalent)
+res.ftest <- var.test(GSI ~ Group, data = Day1)
+res.ftest
+##p>.05 - no difference between the variances of the two group - can use parametric unpaired t-test
+
+#Parametric t-test
+m7 <- t.test(GSI ~ Group, data = Day1, var.equal = TRUE)
+m7
+#There is no significant difference between subs and day 1 for GSI: p=.5983
+
+
+#Comparing GSI of subs compared to day 14 males
+
+#####GSI
+# Shapiro-Wilk normality test for sub
+with(GSIsubs, shapiro.test(GSI[Group == "Sub"]))# p > .05
+# Shapiro-Wilk normality test for day 14
+with(GSIsubs, shapiro.test(GSI[Group == "14"])) # p > .05
+
+###Testing for homogeneity of variances (seeing if variance amongst groups is roughly equivalent)
+res.ftest <- var.test(GSI ~ Group, data = GSIsubs)
+res.ftest
+##p>.05 - no difference between the variances of the two group - can use parametric unpaired t-test
+
+#Parametric t-test
+m7 <- t.test(GSI ~ Group, data = GSIsubs, var.equal = TRUE)
+m7
+#There is a significant difference between subs and day 14 males for GSI: p=0.009
+
+
+# Making figures
+
+pd <- position_dodge(0.2)
+
+play <- function(dd) {
+  output <- ddply(dd, c("Group"), summarise,  #find the average ICC values for males of each response type for both manipulations
+                  N = sum(!is.na(resp)),
+                  mean = mean(resp, na.rm=TRUE),
+                  sd = sd(resp, na.rm=TRUE),      
+                  se = sd(resp, na.rm=TRUE)/sqrt(sum(!is.na(resp)))) 
+  ggplot(output, aes(x=Group, y=mean, fill=Group)) + 
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), colour="black", width=.3, position=pd) +
+    geom_bar(colour = "black", width = .5, stat = "identity", position = "dodge") +
+    coord_cartesian(ylim=c(.5,10)) +
+    guides(fill = FALSE) +
+    xlab("Day") +                                                          #x axis
+    scale_x_discrete(labels=c("Sub" = "SUB", "1" = "1", "2" = "2", "6" = "6", "14" = "14", "Dom" = "DOM")) + 
+    ylab("Chases per minute") +                         #y axis
+    theme_bw(12) + 
+    theme(panel.grid.minor=element_blank(), panel.grid.major=element_blank())+
+    scale_fill_grey(start=0.8, end=0.2) +
+    geom_hline(yintercept=0, size=0.3) +
+    theme(axis.title.y=element_text(vjust=1, size=20), # long axis name, make a bit smaller font
+          axis.text.y = element_text(size=18))+
+    theme(axis.title.y = element_text(margin = margin(t = 0, r = 5, b = 0, l = 20)))+ #r was set to 15
+    # theme(legend.text=element_text(size=14))+
+    theme(axis.title.x=element_text(vjust=0.3,size=20),
+          axis.text.x = element_text(size=18))
+}
+
+
+
+t<-ddply(Ascent, c("Group"), summarise,  #find the average ICC values for males of each response type for both manipulations
+                  N = sum(!is.na(ROM)),
+                  mean = mean(ROM, na.rm=TRUE),
+                  sd = sd(ROM, na.rm=TRUE),      
+                  se = sd(ROM, na.rm=TRUE)/sqrt(sum(!is.na(ROM))))
+
+summary(t)
+str(Ascent$ROM)
+subtest<-subset(Ascent, Ascent$Group=="Sub")
+
+str(subtest$ROM)
+
+##############################All males###################################
+#d-ROM graph (ROM)
+Ascent$resp<-Ascent$ROM
+AscentROM<-play(Ascent)
+AscentROM<-AscentROM+coord_cartesian(ylim=c(0,8)) + ylab(("("~H[2]*O[2]~"mg / dL)")) #was to 6
+AscentROM
+
+#SOD graph (Liver.SOD)
+Ascent$resp<-Ascent$Liver.SOD
+AscentSOD<-play(Ascent)
+AscentSOD<-AscentSOD+coord_cartesian(ylim=c(0,1)) + ylab("SOD \n (U / µg protein)") #was to 0.6
+AscentSOD
+
+#ORAC aka plasma TAC (TAC)
+Ascent$resp<-Ascent$TAC
+AscentTAC<-play(Ascent)
+AscentTAC<-AscentTAC+coord_cartesian(ylim=c(0,2500)) + ylab("  Plasma TAC \n (TE µmol / dL)") +  #was to 1900
+  theme(axis.text.y = element_text(size=15)) # slightly smaller because of large number on y axis
+AscentTAC
+
+#Liver ORAC (Liver.TAC)
+Ascent$resp<-Ascent$Liver.TAC
+AscentLiverTAC<-play(Ascent)
+AscentLiverTAC<-AscentLiverTAC+coord_cartesian(ylim=c(0,4)) + ylab("Liver TAC \n (TE µmol / µg protein)") #was to 2.5
+AscentLiverTAC
+
+#Blood DNA Damage
+Ascent$resp<-Ascent$Damage
+Ascent.Blood.Damage<-play(Ascent)
+Ascent.Blood.Damage<-Ascent.Blood.Damage+coord_cartesian(ylim=c(0,0.0005)) + 
+  ylab(("  Blood DNA Damage \n (ng 8-OHdG / ng DNA)")) #was to 0.3
+Ascent.Blood.Damage
+
+
+#Liver DNA Damage
+Ascent$resp<-Ascent$Liver.damage
+Ascent.Liver.Damage<-play(Ascent)
+Ascent.Liver.Damage<-Ascent.Liver.Damage+coord_cartesian(ylim=c(0,0.0006)) + 
+  ylab(("  Liver DNA Damage \n (ng 8-OHdG / ng DNA)")) #was to 0.4
+Ascent.Liver.Damage
+
+###NOX graph
+Ascent$resp<-Ascent$NOX
+AscentNOX<-play(Ascent)
+AscentNOX<-AscentNOX+coord_cartesian(ylim=c(0,10)) + ylab("  NADPH-oxidase \n (RLU / µg protein)") #was to 7
+AscentNOX
+
+#GSI
+Ascent$resp<-Ascent$GSI
+Ascent.GSI<-play(Ascent)
+Ascent.GSI<-Ascent.GSI+coord_cartesian(ylim=c(0,1.5)) + ylab(("GSI"))
+Ascent.GSI
+
+
+# Saving figures as PDFs
+
+setwd("K:/Research/dijks1pLab/All Projects/A. burtoni - Ascending Male Oxidative Damage/Plots/physiology plots")
+
+
+# use following code to make consistent width/height of each plot: 
+plots <- list(AscentROM, AscentSOD, AscentTAC, AscentLiverTAC, Ascent.Blood.Damage, Ascent.Liver.Damage, AscentNOX)
+grobs <- list()
+widths <- list()
+
+# collect the widths for each grob of each plot
+for (i in 1:length(plots)){
+  grobs[[i]] <- ggplotGrob(plots[[i]])
+  widths[[i]] <- grobs[[i]]$widths[2:5]
+}
+
+#use do.call to get the max width
+maxwidth <- do.call(grid::unit.pmax, widths)
+
+#asign the max width to each grob
+for (i in 1:length(grobs)){
+  grobs[[i]]$widths[2:5] <- as.list(maxwidth)
+}
+#plot
+phys <- do.call("grid.arrange", c(grobs, ncol = 2))
+plot(phys)
+
+#saves as pdf:
+pdf("All males physiology 15.pdf", width=16, height=16)
+plot(phys)
+dev.off()
