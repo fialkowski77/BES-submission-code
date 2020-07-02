@@ -1,0 +1,283 @@
+if(!require(psych)){install.packages("psych")}
+if(!require(nlme)){install.packages("nlme")}
+if(!require(car)){install.packages("car")}
+if(!require(multcompView)){install.packages("multcompView")}
+if(!require(ggplot2)){install.packages("ggplot2")}
+if(!require(rcompanion)){install.packages("rcompanion")}
+if(!require(MASS)){install.packages("MASS")}
+if(!require(multcomp)){install.packages("multcomp")}
+if(!require(readxl)){install.packages("readxl")}
+if(!require(plyr)){install.packages("plyr")}
+if(!require(igraph)){install.packages("igraph")}
+if(!require(lme4)){install.packages("lme4")}
+if(!require(lmerTest)){install.packages("lmerTest")}
+if(!require(gridExtra)){install.packages("gridExtra")}
+if(!require(grid)){install.packages("grid")}
+if(!require(reshape2)){install.packages("reshape2")}
+if(!require(nnet)){install.packages("nnet")}
+
+library(MASS)
+library(multcomp)
+library(readxl) #used to read excel files
+library(plyr) #used to find mean, sd etc. (I used it to make bar graphs with error bars)
+library(igraph) #used to make social networks. I do not think you need it for this script, but it was in an earlier version so better safe than sorry
+library(ggplot2) #used to make graphs
+library(lme4) #used to run a mixed linear model
+library(plotrix) #this tests for normal distribution
+library(lmerTest) #gives p values and significance stars to the read out from the mixed linear model
+library(gridExtra) #used to put several graphs into one image 
+library(grid)#used to put several graphs into one image 
+library(reshape2)
+library(nnet)
+library(nlme)
+library(car)
+
+setwd("K:/Research/dijks1pLab/All Projects/A. burtoni - Ascending Male Oxidative Damage/datasheets")
+
+
+graphs <- read_excel("Male Ascent Focal Male and Suppressor Dom Behavior.xlsx", col_names = TRUE)
+
+#Subsetting to include only pre-ascent behavior, day of ascent behavior, and day of dissection behavior
+#This is so that behavior can be related to physiology
+#if want to analyze behavior across all time points, comment out this section
+graphs<-subset(graphs,graphs$Day==0|graphs$Day==1|graphs$Day==2|graphs$Day==6|graphs$Day==14|graphs$Day==15)
+
+levels(graphs$Day)<-c("Sub", "1","2","6","14","Dom")
+
+#defining territorial behavior (sum of border and lateral displays)
+graphs$Territorial<-graphs$Border+graphs$Lateral
+graphs$Territorial.per.minute<-graphs$Territorial/5
+
+#converting borders and laterals to rate
+graphs$border.per.minute<-graphs$Border/5
+graphs$lateral.per.minute<-graphs$Lateral/5
+
+
+###Making ascent-only data and dataframes for handling control doms, subs, and pre-ascent data
+#Subsetting out day zero - model becomes heavily skewed if added due to only 1 day as sub
+  #If running stats on day zero, will either need to be against suppressor dom or t-test against day x to verify change in behavior
+focalsub<-subset(graphs, graphs$Day==0)
+#Subsetting out suppressor doms - for ascent period, testing if ascent behavior changes
+suppressor<-subset(graphs,graphs$Day==15)
+graph<-subset(graphs, graphs$Day!=0)
+graph<-subset(graph, graph$Day!=15)
+
+#Making day a factor to be used for stats
+graph$Day<-as.factor(graph$Day)
+
+fsub<-subset(graphs, graphs$Day==0|graphs$Day==1)
+
+write.csv(graph,file="All males behavior data.csv")
+
+################Behavior for focal sub vs Day 1 males######################
+###Setting up dataframe to conduct paired t-test
+Day0<-subset(fsub, fsub$Day=="0")
+Day1<-subset(fsub, fsub$Day=="1")
+
+test<-merge(Day0,Day1,by='id',all.x=T)
+
+###########Chases
+m1 <- with(test, Chases.x - Chases.y)
+shapiro.test(m1)
+###p>.05 - data is normally distributed
+
+#Parametric t-test
+m1 <- t.test(test$Chases.x, test$Chases.y, paired = TRUE)
+m1
+
+###########Flees
+m2 <- with(test, Flee.x - Flee.y)
+shapiro.test(m2)
+###p>.05 - data is not normally distributed
+
+
+PQL2 <- glmmPQL(Flee ~ Day, random = ~1 | id,  
+                family = poisson, #'log' link function is used automatically
+                data = fsub, verbose = FALSE)
+summary(PQL2)
+plot(PQL2)
+###There is a significant difference between focal subs and day 1 ascended males
+  ###p=2e-04
+
+
+###########Territorial (borders + laterals) behavior
+m3 <- with(test, Territorial.x - Territorial.y)
+shapiro.test(m3)
+###p<.05 - data is not normally distributed
+
+
+PQL3 <- glmmPQL(Territorial ~ Day, random = ~1 | id,  
+                family = poisson, #'log' link function is used automatically
+                data = fsub, verbose = FALSE)
+summary(PQL3)
+plot(PQL3)
+###Possibly 1 outlier but looks good
+
+###########Courtship behavior
+m4 <- with(test, Courts.x - Courts.y)
+shapiro.test(m4)
+###p<.05 - data is not normally distributed
+
+
+PQL4 <- glmmPQL(Courts ~ Day, random = ~1 | id,  
+                family = poisson, #'log' link function is used automatically
+                data = fsub, verbose = FALSE)
+summary(PQL4)
+plot(PQL4)
+###Possibly 1 outlier but looks good
+
+######################Behavior of ascending males###############################
+#################Chases
+#significant increase in chases-rate from day 1 to day 2
+
+PQL1 <- glmmPQL(Chases ~ Day, random = ~1 | id,  
+                family = poisson, #'log' link function is used automatically
+                data = graph, verbose = FALSE)
+summary(PQL1)
+
+plot(PQL1)
+
+plot(fitted(PQL1), residuals(PQL1), xlab = "Fitted Values", ylab = "Residuals")
+abline(h = 0, lty = 2)
+lines(smooth.spline(fitted(PQL1), residuals(PQL1)))
+
+Anova(PQL1, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is a significant difference across groups: p<.00005
+
+# posthoc test (ROM)
+# looking for an overal effect (although this can also be done with an ANOVA or linear model):
+#k1 <- kruskal.test(ROM~Group, data = Ascent)
+#k1
+summary(glht(PQL1, linfct = mcp(Day = "Tukey")), test = adjusted("bonferroni"))
+###Significant difference across groups: chisq = 15.126, p<0.00005
+#Significant difference between day 1 and day 2, z=3.652, p=0.00156
+######################Courtship
+PQL2 <- glmmPQL(Courts ~ Day, random = ~1 | id,  
+                family = poisson, #'log' link function is used automatically
+                data = graph, verbose = FALSE)
+summary(PQL2)
+
+plot(PQL2)
+
+plot(fitted(PQL2), residuals(PQL2), xlab = "Fitted Values", ylab = "Residuals")
+abline(h = 0, lty = 2)
+lines(smooth.spline(fitted(PQL2), residuals(PQL2)))
+
+Anova(PQL2, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is no significant difference across groups: chisq = 1.514, p=.679
+
+
+##############Territorial (borders + laterals) behavior
+PQL3 <- glmmPQL(Territorial ~ Day, random = ~1 | id,  
+                family = poisson, #'log' link function is used automatically
+                data = graph, verbose = FALSE)
+summary(PQL3)
+
+plot(PQL3)
+
+plot(fitted(PQL3), residuals(PQL3), xlab = "Fitted Values", ylab = "Residuals")
+abline(h = 0, lty = 2)
+lines(smooth.spline(fitted(PQL3), residuals(PQL3)))
+
+Anova(PQL3, type = "II") #if there is no interaction effect, Type II is more powerful
+# there is a significant difference across groups: chisq = 30.161, p<.00005
+
+summary(glht(PQL3, linfct = mcp(Day = "Tukey")), test = adjusted("bonferroni"))
+###Significant difference between days 1 and 2 (z=-4.230, p=0.00014)
+###Significant difference between days 1 and 14 (z=-3.114, p=0.01106)
+
+
+##############Graph function
+pd <- position_dodge(0.2)
+
+# run plot function
+# STEP 1: calculate mean and SE - note that response variable is 'resp' which needs to be redefined before you run the plot
+####### for the appropriate response variable
+## STEP 2: make plot
+
+#Function to run stats and make graphs on behavior - need separate function for physiology
+play <- function(dd) {
+  output <- ddply(dd, .(Day), summarise,  #find the average ICC values for males of each response type for both manipulations
+                  N = sum(!is.na(resp)),
+                  mean = mean(resp, na.rm=TRUE),
+                  sd = sd(resp, na.rm=TRUE),      
+                  se = sd(resp, na.rm=TRUE)/sqrt(sum(!is.na(resp)))) 
+  ggplot(output, aes(x=Day, y=mean, fill=Day)) + 
+    geom_errorbar(aes(ymin=mean-se, ymax=mean+se), colour="black", width=.3, position=pd) +
+    geom_bar(colour = "black", width = .5, stat = "identity", position = "dodge") +
+    coord_cartesian(ylim=c(0,60)) +
+    guides(fill = FALSE) +
+    xlab("Day") +                                                          #x axis
+    scale_x_discrete(labels=c("Sub" = "SUB", "1" = "1", "2" = "2", "6" = "6", "14" = "14", "Dom" = "DOM")) + 
+    ylab("Chases in 5 min") +                         #y axis
+    theme_bw(12) + 
+    theme(panel.grid.minor=element_blank(), panel.grid.major=element_blank())+
+    scale_fill_grey(start=0.8, end=0.2) +
+    geom_hline(yintercept=0, size=0.3) +
+    theme(axis.title.y=element_text(vjust=1, size=20), axis.text.y = element_text(size=18))+
+    theme(axis.title.y = element_text(margin = margin(t = 0, r = 5, b = 0, l = 0)))+ #r was = 15
+    # theme(legend.text=element_text(size=14))+
+    theme(axis.title.x=element_text(vjust=0.3,size=20), axis.text.x = element_text(size=18))
+}
+
+
+##################Making figures
+all.graphs<-graphs
+all.graphs$Day<-as.factor(all.graphs$Day)
+all.graphs$Day<-revalue(all.graphs$Day, c("0"="SUB", "15"="DOM"))
+
+#all.graphs$Day<-ifelse(all.graphs$Day=="15", "Dom", all.graphs$Day)
+#all.graphs$Day<-ifelse(all.graphs$Day=="0", "Sub", all.graphs$Day)
+
+#graphs$Day<-as.factor(graphs$Day)
+
+#chases per minute (Chases.per.minute) graph with function
+all.graphs$resp<-all.graphs$Chases
+all.chases<-play(all.graphs)
+all.chases<-all.chases + coord_cartesian (ylim=c(0,60))
+all.chases
+
+#COURTSHIP rate by group (Courts.per.minute)
+all.graphs$resp<-all.graphs$Courts
+all.courts<-play(all.graphs)
+all.courts<- all.courts + coord_cartesian(ylim=c(0,3)) + ylab("Courtships in 5 min")
+all.courts
+
+##TERRITORIAL BEHAVIOR by group (territorial)
+all.graphs$resp<-all.graphs$Territorial
+all.territoriality<-play(all.graphs)
+all.territoriality<- all.territoriality + coord_cartesian(ylim=c(0,17.5)) + ylab("Display behavior in 5 min")
+all.territoriality
+
+setwd("K:/Research/dijks1pLab/All Projects/A. burtoni - Ascending Male Oxidative Damage/Plots/behavior plots")
+
+
+###############Saving graphs as a figure
+
+# use following code to make consistent width/height of each plot: 
+###Ascent.GSI made from Ascent Project Physiology Analysis v4
+plots <- list(all.chases, all.territoriality, all.courts, Ascent.GSI)
+grobs <- list()
+widths <- list()
+
+# collect the widths for each grob of each plot
+for (i in 1:length(plots)){
+  grobs[[i]] <- ggplotGrob(plots[[i]])
+  widths[[i]] <- grobs[[i]]$widths[2:5]
+}
+
+#use do.call to get the max width
+maxwidth <- do.call(grid::unit.pmax, widths)
+
+#asign the max width to each grob
+for (i in 1:length(grobs)){
+  grobs[[i]]$widths[2:5] <- as.list(maxwidth)
+}
+#plot
+behavior <- do.call("grid.arrange", c(grobs, nrow = 4, ncol = 2))
+plot(behavior)
+
+#saves as pdf:
+pdf("All males behaviors and GSI 9.pdf", width=16, height=16)
+plot(behavior)
+dev.off()
